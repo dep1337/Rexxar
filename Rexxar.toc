@@ -1,0 +1,6 @@
+## Interface: 100005
+## Title: Rexxar (Hunter dashboard)
+## SavedVariables:  rexxarText
+## Notes: Monitor active time and important auras
+## Version: 0.1
+Rexxar.lua
