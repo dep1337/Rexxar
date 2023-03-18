@@ -9,37 +9,38 @@
 --
 --  License: All available rights reserved to the author
 -------------------------------------------------------------------------------
--- Define the more widely-used local variables
-local addonName = "Rexxar" -- Use this variable wherever possible, to facilitate code re-use)
+-- Define some local constants
+local addonName = "Rexxar" -- Use this constant wherever possible, to facilitate code re-use)
 local width, height = 512, 384	-- Width and height of parent frame (before scaling)
 local scale = 1.4 -- Scale multiplier for width and height of parent frame
+local insets = { left = 40, right = -40, top = -40, bottom = 40 } -- Insets are relative to the edges of the parent frame
 local portrait = 132176 -- This FileDataID references "interface\\icons\\ability_hunter_killcommand"
 
--- Define a table for text strings
+-- Implement a table for text strings
 local tText = {
-"Rexxar's Academy\n\n",
-'I am Rexxar, champion of the Horde, master to the beasts of the wilds, and I instruct you to ... err ... "focus". Or you will be eaten by wild beasts. Mine.',
-"Statistics",
-"GCD Timer",
-"I really mean it about the beasts!",
+	"Rexxar's Academy\n\n",
+	'I am Rexxar, champion of the Horde, master to the beasts of the wilds, and I instruct you to ... err ... "focus". Or you will be eaten by wild beasts. Mine.',
+	"Measures",
+	"GCD Timer",
+	"I really mean it about the beasts!",
 }
 
--- Define a table for fonts
-local tFonts = { "QuestTitleFont", }
+-- Implement a table for fonts
+local tFonts = { "QuestTitleFont", "QuestTitleFontBlackShadow", }
 
--- Define a table for spell/aura objects
-local iSpells = {	3, 272790, 34026, 19574, 61304 }
+-- Implement an index and table for spell/aura objects
+local iSpells = {	1, 272790, 34026, 19574, 61304 }
 
 local tSpells = {}
-	tSpells[3] =  {0, "Active time" }
-	tSpells[272790] = { 2058007, "Frenzy downtime\n(< 3 stacks)" } -- spellID --> iconID, line text
+	tSpells[1] =  {nil, "Inactive time" } -- spellID --> iconID, spell/aura name
+	tSpells[272790] = { 2058007, "Frenzy downtime\n(< 3 stacks)" }
 	tSpells[34026] = { 132176, "Kill Command\n(Off-CD time)" }
 	tSpells[19574] = { 132127, "Bestial Wrath\n(Off-CD time)" }
-	tSpells[61304] = { 0, "Global Cooldown" }
+	tSpells[61304] = { nil, "Global Cooldown" }
 
 -- Debugging function to recursively print the contents of a table (eg. a frame)
 local function DumpTable(tbl, lvl) -- Parameters are the table(tbl) and the recursion level (lvl): initially 0 ie. table (tbl)
-	for k,v in pairs(tbl) do 
+	for k, v in pairs(tbl) do 
 		print(strrep("-->", lvl), format("[%s] ", k), v) -- Each recursion level is indented relative to the level that called it
 		if (type(v) == "table") then 
 			DumpTable(v, lvl + 1)
@@ -47,10 +48,15 @@ local function DumpTable(tbl, lvl) -- Parameters are the table(tbl) and the recu
 	end
 end
 
+-- Debugging function to search the available fonts for a key string (eg. "quest")
+local function DumpFonts(key)
+	for i, v in ipairs(GetFonts()) do
+		if (strmatch(v:lower(), key:lower()) ~= nil) then print(i, v) end -- Search is case-insensitive
+	end
+end
+
 -- Create the parent frame for our addon (includes a portrait, title bar, close button and event handlers)
 local frame, events = CreateFrame("Frame", addonName, UIParent, "PortraitFrameTemplate"), {}
-frame:SetTitleOffsets(0, 0, 0, 0) -- Center the title horizontally in the frame (instead of in the title bar) 
-frame:SetTitle(addonName .. "'s Academy")
 frame:SetPoint("CENTER")
 frame:SetSize(1, 1)
 
@@ -62,25 +68,6 @@ t:SetAtlas("UI-Frame-Necrolord-CardParchment", true) -- The "true" resizes our t
 t:SetSize(scale * t:GetWidth(), scale * (t:GetHeight() + frame.TitleContainer:GetHeight()))
 frame:SetWidth(t:GetWidth()) -- Resize the parent frame as well
 frame:SetHeight(t:GetHeight() + frame.TitleContainer:GetHeight())
-
--- Create a frame for one of our monitors
-local inset = CreateFrame("Frame", nil, frame) -- No template: could use "FlatPanelBackgroundTemplate" or "InsetFrameTemplate" here
-inset:SetSize(1, 1)
-
--- Import another Atlas texture
-local t = inset:CreateTexture()
-t:SetDrawLayer("BACKGROUND", -4)
-t:SetAtlas("UI-Frame-Mechagon-Portrait", true)
-t:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)	-- Select the entirety of the Atlas texture
-t:SetAllPoints() -- Lock the texture (t) to the frame
-inset:SetSize(t:GetWidth()/3, t:GetHeight()/2) -- Scaling the frame also scales the texture
-inset:SetPoint("TOPRIGHT",frame, "TOPRIGHT", -25, -150) -- Moving the frame also moves the texture
-
-local separator = frame:CreateTexture()
-separator:SetDrawLayer("BACKGROUND", -3)
-separator:SetAtlas("AnimaChannel-CurrencyBorder", true)
-separator:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)	-- Select the entirety of the Atlas texture
-
 
 -- Make the parent frame draggable
 frame:SetMovable(true)
@@ -122,26 +109,39 @@ end)
 --]]
 
 -- Disply a line of ordinary text
-function CreateText(base, iText, iFont, justifyH)
+local function SetText(base, text, iFont, justifyH)
  	local m = frame:CreateFontString(nil, "BACKGROUND", tFonts[iFont])
-	local originX = 40
-	m:SetPoint("TOPLEFT", frame, "TOPLEFT", originX, base)
-	m:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -originX, base)
+	m:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left, base)
+	m:SetPoint("TOPRIGHT", frame, "TOPRIGHT", insets.right, base)
 	m:SetJustifyH(justifyH)
-	m:SetText(tText[iText])
-	return m
+	m:SetText(text)
+	return m:GetHeight()
 end
 
 -- Display a line with a monitor
-function CreateMonitor(base, iSpells, iFont)
+local function CreateMonitor(base, iSpells, iFont)
  	local m = frame:CreateFontString(nil, "BACKGROUND", tFonts[iFont])
-	local originX = 40
-	m:SetPoint("TOPLEFT", frame, "TOPLEFT", originX, base)
-	m:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", -originX, base - inset:GetHeight())
+	m:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left, base)
+	m:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", insets.right, base - 54)
 	m:SetJustifyH("LEFT")
 	m:SetJustifyV("CENTER")
 	m:SetText(tSpells[iSpells][2])
-	return m
+	return m:GetHeight()
+end
+
+local function CreateKPI(base, index)
+	local f = frame:CreateFrame("Frame", nil, frame)
+	f:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left, bookmark) 
+ end
+
+local function SetSeparator(base, text) -- Parameters are the current value of bookmark (base) and an index into the tText table (index)
+	local t = frame:CreateTexture(nil, "BACKGROUND")
+	t:SetAtlas("GarrMission_RewardsBanner", true)
+	t:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)
+	t:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left, base)
+	t:SetWidth(frame:GetWidth() + insets.right - insets.left)
+	SetText(base - 20, text, 1, "CENTER")
+	return t:GetHeight()
 end
 
 --[[
@@ -152,41 +152,25 @@ function events:ADDON_LOADED(name)
 		-- Set the portrait (at top-left corner of the frame)
 		frame:GetPortrait():SetTexture(portrait)
 
-		local bookmark = -frame.TitleContainer:GetHeight() - 50
+		-- Set the title (at top edge of the frame)
+		frame:SetTitleOffsets(0, 0, 0, 0) -- Center the title horizontally in the frame (instead of in the title bar) 
+		frame:SetTitle(addonName .. "'s Academy")
 
-		local textTitle = CreateText(bookmark, 1, 1, "CENTER")
-		bookmark = bookmark - textTitle:GetHeight()
+		-- Initialise the contents of the frame
+		local bookmark = insets.top - frame.TitleContainer:GetHeight()
+		bookmark = bookmark - SetText(bookmark, tText[1], 2, "CENTER") -- Header
+		bookmark = bookmark - SetText(bookmark, tText[2], 1, "LEFT") -- Introduction
+		bookmark = bookmark - SetSeparator(bookmark, tText[3]) -- Separator (Measures = KPIs)
 
-		local textHeader = CreateText(bookmark, 2, 1, "LEFT")
-		bookmark = bookmark - textHeader:GetHeight()
-
-		local textSub1 = CreateText(bookmark - 20, 3, 1, "CENTER")
-
-		local sep1 = frame:CreateTexture(nil, "BACKGROUND")
-		sep1:SetAtlas("GarrMission_RewardsBanner", true)
-		sep1:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)	-- Select the entirety of the Atlas texture
-		sep1:SetPoint("TOPLEFT", frame, "TOPLEFT", 40, bookmark)
-		sep1:SetWidth(frame:GetWidth() - 80)
-		bookmark = bookmark - sep1:GetHeight()
-
-		inset:SetPoint("TOPRIGHT",frame, "TOPRIGHT", -40, bookmark) -- Moving the frame also moves the texture
-		for i = 1, #iSpells - 1 do
-			CreateMonitor(bookmark, iSpells[i], 1)
-			bookmark = bookmark - inset:GetHeight()
+		for i, v in ipairs(iSpells) do -- KPIs
+			if (i < #iSpells) then bookmark = bookmark - CreateMonitor(bookmark, v, 1) end
 		end
 
-		local textSub2 = CreateText(bookmark - 20, 4, 1, "CENTER")
+		bookmark = bookmark - SetSeparator(bookmark, tText[4]) -- Separator (GCD Timer)
+		bookmark = bookmark - SetText(bookmark, tText[5], 1, "CENTER") -- Footer
 
-		local sep2 = frame:CreateTexture(nil, "BACKGROUND")
-		sep2:SetAtlas("GarrMission_RewardsBanner", true)
-		sep2:SetTexCoord(0, 0, 0, 1, 1, 0, 1, 1)	-- Select the entirety of the Atlas texture
-		sep2:SetPoint("TOPLEFT", frame, "TOPLEFT", 40, bookmark)
-		sep2:SetWidth(frame:GetWidth() - 80)
-		bookmark = bookmark - sep2:GetHeight()
+DumpTable(GetFontInfo("QuestTitleFont"), 0)
 
-		local textFooter = CreateText(bookmark, 5, 1, "CENTER")
-		bookmark = bookmark - textFooter:GetHeight()
-		
 		frame:UnregisterEvent("ADDON_LOADED")
 		print(addonName .. ": Addon has loaded")
 	end
