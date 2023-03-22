@@ -13,28 +13,29 @@
 -----------------------------------------------------------------------------
 -- Define some local constants
 local addonName = "Rexxar" -- Use this constant wherever possible, to facilitate code re-use)
-local scale = 1.4 -- Scale multiplier for parent frame
+local scale = 1 -- Resizing multiplier for parent frame (already uses SetScale(1.4))
+local insets = { left = 20, right = -22, top = -28, bottom = 20 } -- Insets are relative to the edges of the parent frame
 local width = 0 -- Width of parent frame after scaling (initialised early in Section 2)
 local height= 0 -- Height of parent frame after scaling
-local insets = { left = 20 * scale, right = -22 * scale, top = -28 * scale, bottom = 20 * scale } -- Insets are relative to the edges of the parent frame
 local usableW = 0 -- Usable width of parent frame (ie. after after scaling and insets) (again, initialised early in Section 2)
 local usableH = 0 -- Usable height of parent frame
 local portrait = 2031684 -- This FileDataID references "interface\\icons\\inv_rexxar"
+local modeTotal = true -- Should display total (true) or current/most recent fight (false)
 
 -- Define our fonts
 CreateFont("Rexxar_Small"):SetFont("Fonts\\skurri.ttf", 8, "") -- Smaller text in Dark Red
 Rexxar_Small:SetTextColor(0.25, 0, 0, 1)
 
-CreateFont("Rexxar_Normal"):SetFont("Fonts\\skurri.ttf", 14, "") -- Dark Red
+CreateFont("Rexxar_Normal"):SetFont("Fonts\\skurri.ttf", 10, "") -- Dark Red
 Rexxar_Normal:SetTextColor(0.25, 0, 0, 1)
 
-CreateFont("Rexxar_Header"):SetFont("Fonts\\skurri.ttf", 16, "") -- Larger text in a darker Red
+CreateFont("Rexxar_Header"):SetFont("Fonts\\skurri.ttf", 11, "") -- Larger text in a darker Red
 Rexxar_Header:SetTextColor(0.15, 0, 0, 1)
 	
-CreateFont("Rexxar_Pass"):SetFont("Fonts\\skurri.ttf", 14, "") -- Black (for passing KPIs)
+CreateFont("Rexxar_Pass"):SetFont("Fonts\\skurri.ttf", 10, "") -- Black (for passing KPIs)
 Rexxar_Pass:SetTextColor(0, 0, 0, 1)
 
-CreateFont("Rexxar_Fail"):SetFont("Fonts\\skurri.ttf", 14, "") -- Bright Red (for failing KPIs)
+CreateFont("Rexxar_Fail"):SetFont("Fonts\\skurri.ttf", 10, "") -- Bright Red (for failing KPIs)
 Rexxar_Fail:SetTextColor(1, 0, 0, 1)
 
 -- Implement a table for text strings
@@ -42,11 +43,12 @@ local tText = {}
 	tText["addonLoaded"] = addonName .. ": Need something tracked?"
 	tText["playerLogout"] = addonName .. ": Good hunting."
 
-	tText["ttframe"] = addonName .. ": Only beasts are above deceit."
-	tText["ttExit"] = addonName .. ": You can't escape!"
-	tText["ttClose"] = addonName .. ": I will hunt you down!"
-	tText["ttBtn1"] = addonName .. ": Let's get this business over with."
-	tText["ttBtn2"] = addonName .. ": A clean kill."
+	tText["ttframe"] = addonName .. ": \nOnly beasts are above deceit."
+	tText["ttPortrait"] = addonName .. ": \nLiving in the wild you never know what will happen next,\nbut a good hunter can survive on skill and instinct."
+	tText["ttExit"] = addonName .. ": \nYou can't escape!"
+	tText["ttClose"] = addonName .. ": \nI will hunt you down!"
+	tText["ttBtn1"] = addonName .. ": \nLet's get this business over with."
+	tText["ttBtn2"] = addonName .. ": \nA clean kill."
 
 	tText["header"] = addonName .. "'s Academy\n-for-\nWayward Hunters"
 	tText["intro"] = "\nI am Rexxar, champion of the Horde, master to the beasts of the wilds, " ..
@@ -55,19 +57,20 @@ local tText = {}
 	tText["footer"] = "I really mean it about the beasts!"
 
 -- Implement an index and table for spell/aura objects
-local iSpells = {	1, 272790, 34026, 19574, 61304 } -- index --> spellID (ordered list of keys to the tSpells table)
+-- To do: Check whether the dummy spell "Precast" (spellID 324474) is relevant to the Spell Queue Window
+local iSpells = { 1, 272790, 34026, 19574, 61304 } -- index --> spellID (ordered list of keys to the tSpells table)
 
 local tSpells = {} -- spellID --> iconID, spell/aura name, state, KPI "fail" time for current fight, total KPI "fail" time
 	tSpells[1] =  { icon = 236398, text = "Inactive time" } -- There's nothing magic about the "1": "Inactive time" just has no spellID
-	tSpells[272790] = { icon = 2058007, text = "Frenzy downtime\n(< 3 stacks)" }
+	tSpells[272790] = { icon = 2058007, text = "Frenzy buff downtime\n(< 3 stacks)" }
 	tSpells[34026] = { icon = 132176, text = "Kill Command\n(Off-CD time)" }
 	tSpells[19574] = { icon = 132127, text = "Bestial Wrath\n(Off-CD time)" }
 	tSpells[61304] = { icon = 134376, text = "Global Cooldown" } -- Dummy spellID that tracks the Global Cooldown
 
 for k, v in pairs(tSpells) do
-	tSpells[k].state = true -- current fail (true)/pass (false) state for this KPI
-	tSpells[k].fight = 0 -- "fail" time for this KPI in the current/most recent fight (if in/out of combat)
-	tSpells[k].total = 0 -- total "fail" time for this KPI since the data was last reset
+	tSpells[k].state = true -- Current fail (true)/pass (false) state for this KPI
+	tSpells[k].fight = 0 -- The "fail" time for this KPI in the current/most recent fight (if in/out of combat respectively)
+	tSpells[k].total = 1 -- The total "fail" time for this KPI since the data was last reset
 end
 
 -----------------------------------------------------------------------------
@@ -83,6 +86,14 @@ local function dumpTable(tbl, lvl) -- Parameters are the table(tbl) and the recu
 	end
 end
 
+-- Debugging function to print the available methods for an object
+local function dumpObject(object)
+	local meta = getmetatable(object).__index;
+	for k, v in pairs(meta) do
+		if (type(v) == "function") then print(k) end
+	end
+end
+
 -- Debugging function to search the list of available fonts for a key string (eg. "quest")
 local fontList = GetFonts()
 local function findFonts(key)
@@ -94,20 +105,24 @@ end
 -----------------------------------------------------------------------------
 -- SECTION 2: Create the parent frame and implement core functionality
 -----------------------------------------------------------------------------
--- Create the parent frame for our addon (includes a portrait, title bar, tooltip text and event handlers)
--- local frame, events = CreateFrame("Frame", addonName, UIParent, "PortraitFrameTemplate"), {}
+-- Create the parent frame for our addon (includes tooltip text and event handlers)
 local frame, events = CreateFrame("Frame", addonName, UIParent), {}
 frame:SetPoint("CENTER")
-
--- Import an Atlas texture into the background
-local page = frame:CreateTexture()
-page:SetDrawLayer("BACKGROUND", -8) -- Push down our new texture from ("ARTWORK", 0) to the lowest possible layer
-page:SetAtlas("UI-Frame-Necrolord-CardParchment", true) -- The "true" resizes our texture (t) to match the imported texture
-page:SetPoint("TOPLEFT")
-page:SetPoint("BOTTOMRIGHT")
-width, height = scale * page:GetWidth(), scale * page:GetHeight() -- Set the value of these "local constants"
+frame.bgInfo = C_Texture.GetAtlasInfo("UI-Frame-Necrolord-CardParchment")
+width, height = frame.bgInfo.width, frame.bgInfo.height -- Set the value of these "local constants"
 usableW, usableH = width + insets.right - insets.left, height + insets.top - insets.bottom
 frame:SetSize(width, height)
+frame:SetScale(1.4)
+--print(frame:GetScale(), frame:GetSize())
+
+
+
+-- Import an Atlas texture into the background
+local page = frame:CreateTexture(nil, "BACKGROUND", nil, -8)-- Push down our background texture to the lowest possible layer
+page:SetPoint("TOPLEFT")
+page:SetPoint("BOTTOMRIGHT")
+page:SetAtlas("UI-Frame-Necrolord-CardParchment") -- The "true" resizes our texture (t) to match the Atlas texture
+--frame:SetSize(width, height)
 
 -- Make the parent frame draggable
 frame:SetMovable(true)
@@ -161,12 +176,18 @@ end
 -- Define function handler for button "OnMouseDown" scripts
 local function cbOnMouseDown(self, ...)
 	self:SetVertexColor(0.6, 0.6, 0.6)
+	
 --	frame:Hide()
 end
 
 -- Define function handler for button "OnMouseUp" scripts
 local function cbOnMouseUp(self, ...)
 	self:SetVertexColor(0.85, 0.85, 0.85)
+--	if (self == bBtn1) then
+--		if 
+--	else if (self == bBtn2)) then
+	
+--	end
 end
 
 -- Set all the function handlers for a button
@@ -212,9 +233,9 @@ setAllScripts(bClose)
 -- Display a second small button and its key (to left of "close" button)
 local bBtn1 = frame:CreateTexture()
 bBtn1:SetDrawLayer("BACKGROUND", -7)
-bBtn1:SetPoint("BOTTOM", page, "BOTTOM", -width/6, insets.bottom)
-bBtn1:SetAtlas("UI-HUD-UnitFrame-Target-PortraitOn-Boss-IconRing", true)
-bBtn1:SetSize(scale * bBtn1:GetWidth(), scale * bBtn1:GetHeight())
+bBtn1:SetPoint("BOTTOM", page, "BOTTOM", -width/10, insets.bottom)
+bBtn1:SetAtlas("ShipMissionIcon-SiegeA-MapBadge", true)
+bBtn1:SetSize(scale * bBtn1:GetWidth() * 0.6, scale * bBtn1:GetHeight() * 0.6)
 bBtn1["tooltip"] = tText.ttBtn1
 setAllScripts(bBtn1)
 
@@ -228,9 +249,9 @@ bBtn1key:SetText("Button 1")
 -- Display a third small button and its key (to right of "close" button)
 local bBtn2 = frame:CreateTexture()
 bBtn2:SetDrawLayer("BACKGROUND", -7)
-bBtn2:SetPoint("BOTTOM", page, "BOTTOM", width/6, insets.bottom)
-bBtn2:SetAtlas("UI-HUD-UnitFrame-Target-PortraitOn-Boss-IconRing", true)
-bBtn2:SetSize(scale * bBtn2:GetWidth(), scale * bBtn2:GetHeight())
+bBtn2:SetPoint("BOTTOM", page, "BOTTOM", width/10, insets.bottom)
+bBtn2:SetAtlas("ShipMissionIcon-SiegeH-MapBadge", true)
+bBtn2:SetSize(scale * bBtn2:GetWidth() * 0.6, scale * bBtn2:GetHeight() * 0.6)
 bBtn2["tooltip"] = tText.ttBtn2
 setAllScripts(bBtn2)
 
@@ -246,27 +267,42 @@ bBtn2key:SetText("Button 2")
 -----------------------------------------------------------------------------
 -- Print a line of ordinary text
 local function printText(base, text, font, justifyH) -- Only the first two parameters (base and text) are required
- 	local m = frame:CreateFontString(nil, "BACKGROUND")
+ 	local m = frame:CreateFontString()
+	m:SetDrawLayer("ARTWORK", -7)
 	m:SetFontObject(font or "Rexxar_Normal")
-	m:SetPoint("TOPLEFT", page, "TOPLEFT", insets.left, base)
-	m:SetPoint("TOPRIGHT", page, "TOPRIGHT", insets.right, base)
+	m:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left, base)
+	m:SetPoint("TOPRIGHT", frame, "TOPRIGHT", insets.right, base)
 	m:SetJustifyH(justifyH or "LEFT")
 	m:SetJustifyV("CENTER")
 	m:SetText(text)
 	return m:GetHeight()
 end
 
--- Print a KPI value
-local function printValue(base, spellID)
-	local v = tSpells[spellID].fight
-	printText(base, format("%d seconds", v), "Rexxar_KPI", "RIGHT")
-end
+-- Specialised function to turn an icon into a portrait with a ring around it
+local function makePortrait(iconID, size)
+	local tx = frame:CreateTexture(nil, "ARTWORK", nil, -8)
+	tx:SetTexture(iconID)
+	tx:SetTexCoord(0.06, 0.94, 0.06, 0.94) -- Remove the border from the icon
+	tx:SetSize(size * 0.8, size * 0.8)
+
+	local tm = frame:CreateMaskTexture(nil, "ARTWORK", nil, -7)
+	tm:SetTexture("interface/masks/circlemaskscalable", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+	tm:SetPoint("TOPLEFT", tx)
+	tm:SetPoint("BOTTOMRIGHT", tx)
+	tx:AddMaskTexture(tm)
+
+	local tr = frame:CreateTexture(nil, "ARTWORK", nil, -6)
+	tr:SetAtlas("CovenantChoice-Offering-Ability-Ring-Venthyr")
+	tr:SetPoint("TOPLEFT", tx, "TOPLEFT", -size/10, size/10)
+	tr:SetPoint("BOTTOMRIGHT", tx, "BOTTOMRIGHT", size/10, -size/10)
+	return tx
+end	
 
 -- Display a separator banner with a sub-heading
 local function setSeparator(base, text) -- Parameters are the current value of bookmark (base) and a sub-heading (text)
-	local t = frame:CreateTexture(nil, "BACKGROUND")
+	local t = frame:CreateTexture(nil, "ARTWORK", nil, -8)
 	t:SetAtlas("GarrMission_RewardsBanner", true)
-	t:SetPoint("TOPLEFT", page, "TOPLEFT", insets.left, base + 5)
+	t:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left, base + 5)
 	t:SetWidth(usableW)
 	printText(base - 18, text, nil, "CENTER")
 	return t:GetHeight() - 15
@@ -274,24 +310,19 @@ end
 
 -- Set up a KPI line, consisting of icon, description and value
 local function createKPI(base, spell) -- Parameters are the current value of bookmark (base) and a spellID (spell)
-	local w, h = usableW, 52
-	local a = h + 6
-	local c = 90
+	local w, h = usableW, 34
+	local a = h + 2
+	local c = 50
 	local b = w - (a + c)
 
 	-- Display a (masked) icon for the KPI
-	local t = frame:CreateTexture(nil, "BACKGROUND")
-	t:SetTexture(tSpells[spell].icon)
-	t:SetPoint("TOPLEFT", page, "TOPLEFT", insets.left + 2, base -2)
-	t:SetSize(h - 4, h - 4)
-
-	local tm = frame:CreateMaskTexture()
-	tm:SetAllPoints(t)
-	tm:SetTexture("interface/masks/circlemaskscalable", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-	t:AddMaskTexture(tm)
+	local t = makePortrait(tSpells[spell].icon, 32)
+	t:SetPoint("CENTER", frame, "TOPLEFT", insets.left + (h/2), base - (h/2))
+--	t:SetPoint("TOPLEFT", frame, "TOPLEFT", insets.left + 1 - 20, base - 1 - 20)
 
 	-- Display a short description of the KPI
-	local key = frame:CreateFontString(nil, "BACKGROUND")
+	local key = frame:CreateFontString()
+	key:SetDrawLayer("BACKGROUND", -6)
 	key:SetFontObject("Rexxar_Normal")
 	key:SetPoint("TOPLEFT", page, "TOPLEFT", insets.left + a, base)
 	key:SetSize(b, h)
@@ -300,8 +331,9 @@ local function createKPI(base, spell) -- Parameters are the current value of boo
 	key:SetText(tSpells[spell].text)
 	
 	-- Display the value of the KPI
-	local value = frame:CreateFontString(nil, "BACKGROUND")
-	if (tSpells[spell].state == true) then
+	local value = frame:CreateFontString()
+	value:SetDrawLayer("BACKGROUND", -6)
+	if (tSpells[spell].state == true) then -- Currently failing or passing this KPI (eg inactive or active)
 		value:SetFontObject("Rexxar_Fail")
 	else 
 		value:SetFontObject("Rexxar_Pass")
@@ -310,7 +342,11 @@ local function createKPI(base, spell) -- Parameters are the current value of boo
 	value:SetSize(c, h)
 	value:SetJustifyH("RIGHT")
 	value:SetJustifyV("CENTER")
-	value:SetText(format("%d seconds", tSpells[spell].fight))
+	if (modeTotal == true) then -- Should we display the total or only the current/most recent fight
+		value:SetText(format("%d seconds", tSpells[spell].total))
+	else
+		value:SetText(format("%d seconds", tSpells[spell].fight))
+	end
 	return h
 end
 
@@ -330,13 +366,20 @@ end)--]]
 -----------------------------------------------------------------------------
 function events:ADDON_LOADED(name)
 	if (name == addonName) then
-		-- Set the portrait (at top-left corner of the frame)
---		frame:GetPortrait():SetTexture(portrait)
+		-- Set the portrait (at top-left corner of the page)
+		local p = makePortrait(portrait, 64)
+		p:SetPoint("CENTER", frame, "TOPLEFT", 16, -16)
+--		p:SetPoint("TOPLEFT", frame, "TOPLEFT", -16, 16)
+
+		p["tooltip"] = tText.ttPortrait
+		p:EnableMouse(true)
+		p:SetScript("OnEnter", cbOnEnter)
+		p:SetScript("OnLeave", cbOnLeave)
 
 		-- Display the header and introductory paragraph
 		local bookmark = insets.top
 		bookmark = bookmark - printText(bookmark, tText.header, Rexxar_Header, "CENTER")
-		bookmark = bookmark - printText(bookmark, tText.intro)
+		bookmark = bookmark - printText(bookmark, tText.intro) + 5
 		
 		-- Display the KPIs
 		bookmark = bookmark - setSeparator(bookmark, "Tracking")
@@ -345,9 +388,9 @@ function events:ADDON_LOADED(name)
 		end
 
 		-- GCD Timer: Display the status bar
-		bookmark = bookmark - setSeparator(bookmark, "GCD Timer")
-		local GCD = frame:CreateTexture()
-		GCD:SetDrawLayer("BACKGROUND", -6)
+		bookmark = bookmark + 5
+		bookmark = bookmark - setSeparator(bookmark, "GCD Timer") - 10
+		local GCD = frame:CreateTexture(nil, "BACKGROUND", nil, -6)
 		GCD:SetAtlas("honorsystem-bar-frame-small", true)
 		local ow = GCD:GetWidth()
 		GCD:SetPoint("TOP", page, "TOP", 0, bookmark)
@@ -355,20 +398,29 @@ function events:ADDON_LOADED(name)
 		GCD:SetHeight(GCD:GetHeight() * GCD:GetWidth() / ow)
 
 		-- GCD Timer: Add a (masked) icon to the status bar
-		local GCDicon = frame:CreateTexture(nil, "BACKGROUND")
-		GCDicon:SetTexture(tSpells[61304].icon)
-		GCDicon:SetTexCoord(0.06, 0.94, 0.06, 0.94)
-		GCDicon:SetPoint("CENTER", GCD, "LEFT", 17, 2)
-		GCDicon:SetSize(23, 22)
+		local GCDicon = makePortrait(tSpells[61304].icon, 22)
+		GCDicon:SetPoint("CENTER", GCD, "LEFT", 13, 2)
 
-		local GCDmask = frame:CreateMaskTexture()
-		GCDmask:SetAllPoints(GCDicon)
-		GCDmask:SetTexture("interface/masks/circlemaskscalable", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
-		GCDicon:AddMaskTexture(GCDmask)
-		bookmark = bookmark - GCD:GetHeight() - 12
+		-- GCD Timer: Add a key for the Spell Queue Window (SQW)
+		local GCDkey1 = frame:CreateFontString()
+		GCDkey1:SetFontObject("Rexxar_Normal")
+		GCDkey1:SetPoint("BOTTOM", GCD, "TOPLEFT", 83, -2)
+		GCDkey1:SetJustifyH("CENTER")
+		GCDkey1:SetJustifyV("CENTER")
+		GCDkey1:SetText("SQW")
+
+		-- GCD Timer: Add a key for the Haste-adjusted Global Cooldown (hGCD) 
+		local GCDkey2 = frame:CreateFontString()
+		GCDkey2:SetFontObject("Rexxar_Normal")
+		GCDkey2:SetPoint("BOTTOM", GCD, "TOPRIGHT", -15, -1)
+		GCDkey2:SetJustifyH("CENTER")
+		GCDkey2:SetJustifyV("CENTER")
+		GCDkey2:SetText("hGCD")
+--		bookmark = bookmark - GCD:GetHeight() - 12
 
 		-- Display the footer
-		bookmark = bookmark - printText(10 - usableH, tText.footer, nil, "CENTER")
+--		bookmark = bookmark - printText(10 - usableH, tText.footer, nil, "CENTER")
+		printText(5 - usableH, tText.footer, nil, "CENTER")
 
 		frame:UnregisterEvent("ADDON_LOADED")
 		print(tText.addonLoaded)
